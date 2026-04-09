@@ -1,12 +1,7 @@
 import os
 import logging
-from datetime import datetime
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    BotCommand,
-)
+from datetime import datetime, timedelta
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -18,92 +13,45 @@ from telegram.ext import (
 
 logging.basicConfig(level=logging.INFO)
 
-TOKEN = ("8762946008:AAHRp1qgABwPUW9Urx66geTqC8y0xaAt3MI")
-
+TOKEN = os.getenv("8762946008:AAHRp1qgABwPUW9Urx66geTqC8y0xaAt3MI")
 if not TOKEN:
-    TOKEN = "PUT_YOUR_TOKEN_HERE"  # fallback for local testing
+    TOKEN = "8762946008:AAHRp1qgABwPUW9Urx66geTqC8y0xaAt3MI"  # for local testing only
 
+# 🔗 GOOGLE DRIVE LINKS
+DATA_LINK = "https://drive.google.com/drive/folders/1x1e_hpdVHKKjrqz2oEl56I4kV_SB9PBX?usp=drive_link"
+CONTENT_LINK = "https://drive.google.com/drive/folders/12lNWAaKrN9zgG5jD_DZA6wlhaN0TK1Ta?usp=drive_link"
+SCRIPT_LINK = "https://drive.google.com/drive/folders/1-HpKQHUABF8_lhxXdNmgKO7hujHxlk-L?usp=drive_link"
+SCHEDULE_LINK = "https://drive.google.com/drive/folders/13Dweh3J14qH8o7v2MEd7I5M577-trxyn?usp=drive_link"
+
+# Work tracking
 work_sessions = {}
-
-# ---------------- HELPERS ---------------- #
-
-async def send_txt_files(update, folder):
-    if not os.path.exists(folder):
-        await update.message.reply_text(f"❌ {folder} folder not found.")
-        return
-
-    files = [f for f in os.listdir(folder) if f.endswith(".txt")]
-
-    if not files:
-        await update.message.reply_text("📭 No files found.")
-        return
-
-    for file in files:
-        with open(os.path.join(folder, file), "rb") as f:
-            await update.message.reply_document(f)
+work_totals = {}
 
 # ---------------- COMMANDS ---------------- #
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Bot is running 🚀")
+    await update.message.reply_text("🚀 Bot is live and ready.")
 
 async def data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    drive_link = "https://drive.google.com/drive/folders/1x1e_hpdVHKKjrqz2oEl56I4kV_SB9PBX?usp=drive_link"
-
-    await update.message.reply_text(
-        "📁 Access all files here:\n"
-        f"{drive_link}\n\n"
-        "⚡ Updated regularly"
-    )
+    await update.message.reply_text(f"📁 Main Drive:\n{DATA_LINK}")
 
 async def client(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    clients = ["جينزي", "جادو", "شاورما يزن","يلا نوكل","الجيزاوي","ابن سيرين","لا كاسا","زرب و زربيان","الحوت","زووم","زورو","هومييز","واو","تشيكن مان"]
+    clients = [
+        "جينزي", "جادو", "شاورما يزن", "يلا نوكل",
+        "الجيزاوي", "ابن سيرين", "لا كاسا",
+        "زرب و زربيان", "الحوت", "زووم",
+        "زورو", "هومييز", "واو", "تشيكن مان"
+    ]
     await update.message.reply_text("👥 Clients:\n" + "\n".join(clients))
 
 async def content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_txt_files(update, "content")
+    await update.message.reply_text(f"📂 Content Folder:\n{CONTENT_LINK}")
 
 async def script(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_txt_files(update, "script")
-
-# ---------------- SCHEDULE ---------------- #
+    await update.message.reply_text(f"📝 Script Folder:\n{SCRIPT_LINK}")
 
 async def schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("Abood", callback_data="abood")],
-        [InlineKeyboardButton("Nadaaf", callback_data="nadaaf")],
-        [InlineKeyboardButton("Client", callback_data="client_schedule")],
-    ]
-    await update.message.reply_text(
-        "📅 Choose directory:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
-
-async def handle_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    folder_map = {
-        "abood": "schedule/abood",
-        "nadaaf": "schedule/nadaaf",
-        "client_schedule": "schedule/client",
-    }
-
-    folder = folder_map.get(query.data)
-
-    if not folder or not os.path.exists(folder):
-        await query.message.reply_text("❌ Folder not found.")
-        return
-
-    files = [f for f in os.listdir(folder) if f.endswith(".txt")]
-
-    if not files:
-        await query.message.reply_text("📭 No files found in this folder.")
-        return
-
-    for file in files:
-        with open(os.path.join(folder, file), "rb") as f:
-            await query.message.reply_document(f)
+    await update.message.reply_text(f"📅 Schedule Folder:\n{SCHEDULE_LINK}")
 
 # ---------------- WORK SYSTEM ---------------- #
 
@@ -121,7 +69,10 @@ async def handle_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    user_id = query.from_user.id
+    user = query.from_user
+    user_id = user.id
+    name = user.first_name
+
     now = datetime.now()
 
     # CLOCK IN
@@ -130,27 +81,52 @@ async def handle_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("⚠️ You already clocked in.")
             return
 
-        work_sessions[user_id] = now
+        work_sessions[user_id] = (now, name)
         await query.message.reply_text(f"🟢 Clocked IN at {now.strftime('%H:%M')}")
 
     # CLOCK OUT
     elif query.data == "work_out":
-        start_time = work_sessions.get(user_id)
+        session = work_sessions.get(user_id)
 
-        if not start_time:
+        if not session:
             await query.message.reply_text("❌ You didn't clock in.")
             return
 
+        start_time, name = session
         duration = now - start_time
+
+        if user_id not in work_totals:
+            work_totals[user_id] = {"name": name, "time": timedelta()}
+
+        work_totals[user_id]["time"] += duration
+
         hours = int(duration.total_seconds() // 3600)
         minutes = int((duration.total_seconds() % 3600) // 60)
 
         await query.message.reply_text(
             f"🔴 Clocked OUT at {now.strftime('%H:%M')}\n"
-            f"⏱ Worked: {hours}h {minutes}m"
+            f"⏱ Session: {hours}h {minutes}m"
         )
 
         del work_sessions[user_id]
+
+# ---------------- WORK REPORT ---------------- #
+
+async def workreport(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not work_totals:
+        await update.message.reply_text("📊 No work data yet.")
+        return
+
+    report = "📊 Work Report:\n\n"
+
+    for user in work_totals.values():
+        total_seconds = user["time"].total_seconds()
+        hours = int(total_seconds // 3600)
+        minutes = int((total_seconds % 3600) // 60)
+
+        report += f"{user['name']} → {hours}h {minutes}m\n"
+
+    await update.message.reply_text(report)
 
 # ---------------- ERROR HANDLER ---------------- #
 
@@ -161,12 +137,13 @@ async def error_handler(update, context):
 
 async def set_commands(app):
     commands = [
-        BotCommand("data", "Get drive link"),
+        BotCommand("data", "Main drive link"),
         BotCommand("client", "View clients"),
-        BotCommand("content", "Get content files"),
-        BotCommand("script", "Get scripts"),
-        BotCommand("schedule", "View schedules"),
+        BotCommand("content", "Content folder"),
+        BotCommand("script", "Script folder"),
+        BotCommand("schedule", "Schedule folder"),
         BotCommand("work", "Clock in/out"),
+        BotCommand("workreport", "Work report"),
     ]
     await app.bot.set_my_commands(commands)
 
@@ -181,12 +158,11 @@ app.add_handler(CommandHandler("content", content))
 app.add_handler(CommandHandler("script", script))
 app.add_handler(CommandHandler("schedule", schedule))
 app.add_handler(CommandHandler("work", work))
+app.add_handler(CommandHandler("workreport", workreport))
 
-app.add_handler(CallbackQueryHandler(handle_schedule, pattern="^(abood|nadaaf|client_schedule)$"))
 app.add_handler(CallbackQueryHandler(handle_work, pattern="^work_"))
 
 app.add_error_handler(error_handler)
-
 app.post_init = set_commands
 
 logging.info("Bot is running...")
