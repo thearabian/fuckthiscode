@@ -14,11 +14,11 @@ from telegram.ext import (
 
 logging.basicConfig(level=logging.INFO)
 
-TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = os.getenv("8762946008:AAHRp1qgABwPUW9Urx66geTqC8y0xaAt3MI")
 if not TOKEN:
-    TOKEN = "PUT_YOUR_TOKEN_HERE"
+    TOKEN = "8762946008:AAHRp1qgABwPUW9Urx66geTqC8y0xaAt3MI"
 
-ADMIN_ID = 123456789  # 🔴 PUT YOUR TELEGRAM ID
+ADMIN_ID = 7969168763  # 🔴 PUT YOUR TELEGRAM ID
 
 # 🔗 GOOGLE DRIVE LINKS
 DATA_LINK = "https://drive.google.com/drive/folders/1x1e_hpdVHKKjrqz2oEl56I4kV_SB9PBX?usp=drive_link"
