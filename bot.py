@@ -1,7 +1,6 @@
 import os
 import logging
-from datetime import datetime, timedelta
-from io import BytesIO
+from datetime import datetime, timedelta, time
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
@@ -9,8 +8,6 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
-    MessageHandler,
-    filters
 )
 
 # ---------------- CONFIG ---------------- #
@@ -21,17 +18,24 @@ TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
     TOKEN = "PUT_YOUR_TOKEN_HERE"
 
+ADMIN_ID = 123456789  # 🔴 PUT YOUR TELEGRAM ID
+
 # 🔗 GOOGLE DRIVE LINKS
 DATA_LINK = "https://drive.google.com/drive/folders/1x1e_hpdVHKKjrqz2oEl56I4kV_SB9PBX?usp=drive_link"
 CONTENT_LINK = "https://drive.google.com/drive/folders/12lNWAaKrN9zgG5jD_DZA6wlhaN0TK1Ta?usp=drive_link"
 SCRIPT_LINK = "https://drive.google.com/drive/folders/1-HpKQHUABF8_lhxXdNmgKO7hujHxlk-L?usp=drive_link"
 SCHEDULE_LINK = "https://drive.google.com/drive/folders/13Dweh3J14qH8o7v2MEd7I5M577-trxyn?usp=drive_link"
 
+# ⏰ WORK RULES
+WORK_START_HOUR = 9
+WORK_END_HOUR = 18
+LATE_CHECK_MINUTE = 15
+
 # ---------------- STATE ---------------- #
 
 work_sessions = {}
 work_totals = {}
-upload_state = {}
+daily_attendance = set()
 
 # ---------------- BASIC COMMANDS ---------------- #
 
@@ -66,10 +70,7 @@ async def work(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🟢 IN", callback_data="work_in")],
         [InlineKeyboardButton("🔴 OUT", callback_data="work_out")],
     ]
-    await update.message.reply_text(
-        "💼 Work Control:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+    await update.message.reply_text("💼 Work Control:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def handle_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -85,6 +86,8 @@ async def handle_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         work_sessions[user_id] = (now, name)
+        daily_attendance.add(user_id)
+
         await query.message.reply_text(f"🟢 IN at {now.strftime('%H:%M')}")
 
     elif query.data == "work_out":
@@ -103,109 +106,93 @@ async def handle_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
         hours = int(duration.total_seconds() // 3600)
         minutes = int((duration.total_seconds() % 3600) // 60)
 
-        await query.message.reply_text(
-            f"🔴 OUT\n⏱ {hours}h {minutes}m"
-        )
+        await query.message.reply_text(f"🔴 OUT\n⏱ {hours}h {minutes}m")
 
         del work_sessions[user_id]
 
-# ---------------- WORK REPORT ---------------- #
+# ---------------- ADMIN DASHBOARD ---------------- #
 
-async def workreport(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not work_totals:
-        await update.message.reply_text("📊 No work data yet.")
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Not authorized")
         return
 
-    report = "📊 Work Report:\n\n"
+    now = datetime.now()
 
+    # Active workers
+    active_text = ""
+    for uid, (start_time, name) in work_sessions.items():
+        duration = now - start_time
+        h = int(duration.total_seconds() // 3600)
+        m = int((duration.total_seconds() % 3600) // 60)
+        active_text += f"{name} → {h}h {m}m (active)\n"
+
+    if not active_text:
+        active_text = "None"
+
+    # Total
+    total_text = ""
     for user in work_totals.values():
         total = user["time"].total_seconds()
-        hours = int(total // 3600)
-        minutes = int((total % 3600) // 60)
+        total_text += f"{user['name']} → {int(total//3600)}h {int((total%3600)//60)}m\n"
 
-        report += f"{user['name']} → {hours}h {minutes}m\n"
+    if not total_text:
+        total_text = "None"
 
-    await update.message.reply_text(report)
+    await update.message.reply_text(
+        f"👑 ADMIN\n\n🟢 Active:\n{active_text}\n📊 Total:\n{total_text}"
+    )
 
-# ---------------- UPLOAD SYSTEM (NO CLOUD) ---------------- #
+# ---------------- AUTO SYSTEM ---------------- #
 
-async def uploadcontent(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    upload_state[update.effective_user.id] = {
-        "type": "content",
-        "step": "text"
-    }
-    await update.message.reply_text("✍️ Send your content text")
+async def check_late(context: ContextTypes.DEFAULT_TYPE):
+    if not daily_attendance:
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text="⚠️ No one clocked in by 9:15 AM!"
+        )
 
-async def uploadscript(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    upload_state[update.effective_user.id] = {
-        "type": "script",
-        "step": "text"
-    }
-    await update.message.reply_text("✍️ Send your script text")
+async def auto_clock_out(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now()
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-
-    if user_id not in upload_state:
+    if not work_sessions:
         return
 
-    state = upload_state[user_id]
+    msg = "🔴 AUTO CLOCK-OUT (6 PM)\n\n"
 
-    if state["step"] != "text":
-        return
+    for user_id, (start_time, name) in list(work_sessions.items()):
+        duration = now - start_time
 
-    state["text"] = update.message.text
-    state["step"] = "name"
+        if user_id not in work_totals:
+            work_totals[user_id] = {"name": name, "time": timedelta()}
 
-    await update.message.reply_text("📝 Send file name or type 'auto'")
+        work_totals[user_id]["time"] += duration
 
-async def handle_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+        h = int(duration.total_seconds() // 3600)
+        m = int((duration.total_seconds() % 3600) // 60)
 
-    if user_id not in upload_state:
-        return
+        msg += f"{name} → {h}h {m}m\n"
 
-    state = upload_state[user_id]
+        del work_sessions[user_id]
 
-    if state["step"] != "name":
-        return
-
-    name_input = update.message.text
-
-    if name_input.lower() == "auto":
-        filename = f"{state['type']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-    else:
-        filename = f"{name_input}.txt"
-
-    file = BytesIO(state["text"].encode("utf-8"))
-    file.name = filename
-
-    await update.message.reply_document(file)
-
-    del upload_state[user_id]
-
-# ---------------- ERROR HANDLER ---------------- #
-
-async def error_handler(update, context):
-    logging.error(f"Error: {context.error}")
+    await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
 
 # ---------------- COMMAND MENU ---------------- #
 
 async def set_commands(app):
     commands = [
-        BotCommand("data", "Main drive link"),
-        BotCommand("client", "View clients"),
-        BotCommand("content", "Content folder"),
-        BotCommand("script", "Script folder"),
-        BotCommand("schedule", "Schedule folder"),
+        BotCommand("data", "Drive link"),
+        BotCommand("client", "Clients"),
+        BotCommand("content", "Content"),
+        BotCommand("script", "Scripts"),
+        BotCommand("schedule", "Schedule"),
         BotCommand("work", "Clock in/out"),
-        BotCommand("workreport", "Work report"),
-        BotCommand("uploadcontent", "Upload content file"),
-        BotCommand("uploadscript", "Upload script file"),
+        BotCommand("workreport", "Report"),
+        BotCommand("admin", "Admin panel"),
     ]
     await app.bot.set_my_commands(commands)
 
-# ---------------- RUN BOT ---------------- #
+# ---------------- RUN ---------------- #
 
 app = ApplicationBuilder().token(TOKEN).build()
 
@@ -216,17 +203,16 @@ app.add_handler(CommandHandler("content", content))
 app.add_handler(CommandHandler("script", script))
 app.add_handler(CommandHandler("schedule", schedule))
 app.add_handler(CommandHandler("work", work))
-app.add_handler(CommandHandler("workreport", workreport))
-app.add_handler(CommandHandler("uploadcontent", uploadcontent))
-app.add_handler(CommandHandler("uploadscript", uploadscript))
+app.add_handler(CommandHandler("admin", admin))
 
 app.add_handler(CallbackQueryHandler(handle_work, pattern="^work_"))
 
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_name))
-
-app.add_error_handler(error_handler)
 app.post_init = set_commands
+
+# ⏰ JOBS
+job_queue = app.job_queue
+job_queue.run_daily(check_late, time=time(hour=9, minute=15))
+job_queue.run_daily(auto_clock_out, time=time(hour=18, minute=0))
 
 logging.info("Bot is running...")
 app.run_polling()
