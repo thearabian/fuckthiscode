@@ -1,6 +1,7 @@
 import os
 import logging
 from datetime import datetime, timedelta, time
+from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
@@ -18,18 +19,15 @@ TOKEN = os.getenv("8762946008:AAHRp1qgABwPUW9Urx66geTqC8y0xaAt3MI")
 if not TOKEN:
     TOKEN = "8762946008:AAHRp1qgABwPUW9Urx66geTqC8y0xaAt3MI"
 
-ADMIN_ID = 7969168763  # 🔴 PUT YOUR TELEGRAM ID
+ADMIN_ID = 7969168763  # 🔴 PUT YOUR ID
 
-# 🔗 GOOGLE DRIVE LINKS
-DATA_LINK = "https://drive.google.com/drive/folders/1x1e_hpdVHKKjrqz2oEl56I4kV_SB9PBX?usp=drive_link"
-CONTENT_LINK = "https://drive.google.com/drive/folders/12lNWAaKrN9zgG5jD_DZA6wlhaN0TK1Ta?usp=drive_link"
-SCRIPT_LINK = "https://drive.google.com/drive/folders/1-HpKQHUABF8_lhxXdNmgKO7hujHxlk-L?usp=drive_link"
-SCHEDULE_LINK = "https://drive.google.com/drive/folders/13Dweh3J14qH8o7v2MEd7I5M577-trxyn?usp=drive_link"
+TIMEZONE = ZoneInfo("Asia/Amman")
 
-# ⏰ WORK RULES
-WORK_START_HOUR = 9
-WORK_END_HOUR = 18
-LATE_CHECK_MINUTE = 15
+# 🔗 LINKS
+DATA_LINK = "https://drive.google.com/drive/folders/1x1e_hpdVHKKjrqz2oEl56I4kV_SB9PBX"
+CONTENT_LINK = "https://drive.google.com/drive/folders/12lNWAaKrN9zgG5jD_DZA6wlhaN0TK1Ta"
+SCRIPT_LINK = "https://drive.google.com/drive/folders/1-HpKQHUABF8_lhxXdNmgKO7hujHxlk-L"
+SCHEDULE_LINK = "https://drive.google.com/drive/folders/13Dweh3J14qH8o7v2MEd7I5M577-trxyn"
 
 # ---------------- STATE ---------------- #
 
@@ -37,160 +35,179 @@ work_sessions = {}
 work_totals = {}
 daily_attendance = set()
 
-# ---------------- BASIC COMMANDS ---------------- #
+# ---------------- BASIC ---------------- #
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚀 Bot is live and ready.")
+    await update.message.reply_text("🚀 Bot is live.")
 
 async def data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"📁 Main Drive:\n{DATA_LINK}")
-
-async def client(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    clients = [
-        "جينزي","جادو","شاورما يزن","يلا نوكل",
-        "الجيزاوي","ابن سيرين","لا كاسا",
-        "زرب و زربيان","الحوت","زووم",
-        "زورو","هومييز","واو","تشيكن مان"
-    ]
-    await update.message.reply_text("👥 Clients:\n" + "\n".join(clients))
+    await update.message.reply_text(DATA_LINK)
 
 async def content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"📂 Content Folder:\n{CONTENT_LINK}")
+    await update.message.reply_text(CONTENT_LINK)
 
 async def script(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"📝 Script Folder:\n{SCRIPT_LINK}")
+    await update.message.reply_text(SCRIPT_LINK)
 
 async def schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"📅 Schedule Folder:\n{SCHEDULE_LINK}")
+    await update.message.reply_text(SCHEDULE_LINK)
 
-# ---------------- WORK SYSTEM ---------------- #
+# ---------------- WORK ---------------- #
 
 async def work(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🟢 IN", callback_data="work_in")],
         [InlineKeyboardButton("🔴 OUT", callback_data="work_out")],
     ]
-    await update.message.reply_text("💼 Work Control:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("Work Control:", reply_markup=InlineKeyboardMarkup(keyboard))
+
 
 async def handle_work(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    user_id = query.from_user.id
-    name = query.from_user.first_name
-    now = datetime.now()
+    user = query.from_user
+    user_id = user.id
+    name = user.first_name
+    now = datetime.now(TIMEZONE)
 
+    # -------- IN --------
     if query.data == "work_in":
         if user_id in work_sessions:
-            await query.message.reply_text("⚠️ Already clocked in.")
+            await query.message.reply_text("⚠️ Already IN")
             return
 
         work_sessions[user_id] = (now, name)
         daily_attendance.add(user_id)
 
-        await query.message.reply_text(f"🟢 IN at {now.strftime('%H:%M')}")
+        # Late penalty
+        if now.hour > 9 or (now.hour == 9 and now.minute > 30):
+            await query.message.reply_text("⚠️ Late! Half-day penalty.")
 
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"🚨 LATE: {name}"
+            )
+
+        await query.message.reply_text(f"🟢 IN {now.strftime('%H:%M')}")
+
+    # -------- OUT --------
     elif query.data == "work_out":
         if user_id not in work_sessions:
-            await query.message.reply_text("❌ Not clocked in.")
+            await query.message.reply_text("❌ Not IN")
             return
 
-        start_time, name = work_sessions[user_id]
-        duration = now - start_time
+        start, name = work_sessions[user_id]
+        duration = now - start
 
         if user_id not in work_totals:
             work_totals[user_id] = {"name": name, "time": timedelta()}
 
         work_totals[user_id]["time"] += duration
 
-        hours = int(duration.total_seconds() // 3600)
-        minutes = int((duration.total_seconds() % 3600) // 60)
+        h = int(duration.total_seconds() // 3600)
+        m = int((duration.total_seconds() % 3600) // 60)
 
-        await query.message.reply_text(f"🔴 OUT\n⏱ {hours}h {minutes}m")
+        await query.message.reply_text(f"🔴 OUT {h}h {m}m")
 
         del work_sessions[user_id]
 
-# ---------------- ADMIN DASHBOARD ---------------- #
+# ---------------- ADMIN ---------------- #
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Not authorized")
         return
 
-    now = datetime.now()
+    now = datetime.now(TIMEZONE)
 
-    # Active workers
-    active_text = ""
-    for uid, (start_time, name) in work_sessions.items():
-        duration = now - start_time
-        h = int(duration.total_seconds() // 3600)
-        m = int((duration.total_seconds() % 3600) // 60)
-        active_text += f"{name} → {h}h {m}m (active)\n"
+    active = ""
+    for _, (start, name) in work_sessions.items():
+        d = now - start
+        active += f"{name} {int(d.total_seconds()//3600)}h\n"
 
-    if not active_text:
-        active_text = "None"
+    total = ""
+    for u in work_totals.values():
+        t = u["time"].total_seconds()
+        total += f"{u['name']} {int(t//3600)}h\n"
 
-    # Total
-    total_text = ""
-    for user in work_totals.values():
-        total = user["time"].total_seconds()
-        total_text += f"{user['name']} → {int(total//3600)}h {int((total%3600)//60)}m\n"
+    await update.message.reply_text(f"Active:\n{active or 'None'}\n\nTotal:\n{total or 'None'}")
 
-    if not total_text:
-        total_text = "None"
+# ---------------- FORCE ---------------- #
+
+async def forcein(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    user_id = int(context.args[0])
+    now = datetime.now(TIMEZONE)
+
+    work_sessions[user_id] = (now, f"User {user_id}")
+    await update.message.reply_text(f"Forced IN {user_id}")
+
+
+async def forceout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    user_id = int(context.args[0])
+
+    if user_id not in work_sessions:
+        return
+
+    start, name = work_sessions[user_id]
+    now = datetime.now(TIMEZONE)
+
+    duration = now - start
+
+    if user_id not in work_totals:
+        work_totals[user_id] = {"name": name, "time": timedelta()}
+
+    work_totals[user_id]["time"] += duration
+
+    del work_sessions[user_id]
+
+    await update.message.reply_text(f"Forced OUT {user_id}")
+
+# ---------------- WHOIS ---------------- #
+
+async def whois(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
 
     await update.message.reply_text(
-        f"👑 ADMIN\n\n🟢 Active:\n{active_text}\n📊 Total:\n{total_text}"
+        f"ID: {user.id}\nName: {user.first_name}\n@{user.username}"
     )
 
 # ---------------- AUTO SYSTEM ---------------- #
 
 async def check_late(context: ContextTypes.DEFAULT_TYPE):
     if not daily_attendance:
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text="⚠️ No one clocked in by 9:15 AM!"
-        )
+        await context.bot.send_message(ADMIN_ID, "⚠️ No one clocked in")
 
 async def auto_clock_out(context: ContextTypes.DEFAULT_TYPE):
-    now = datetime.now()
+    now = datetime.now(TIMEZONE)
 
     if not work_sessions:
         return
 
-    msg = "🔴 AUTO CLOCK-OUT (6 PM)\n\n"
+    msg = "AUTO OUT\n"
 
-    for user_id, (start_time, name) in list(work_sessions.items()):
-        duration = now - start_time
+    for uid, (start, name) in list(work_sessions.items()):
+        d = now - start
 
-        if user_id not in work_totals:
-            work_totals[user_id] = {"name": name, "time": timedelta()}
+        if uid not in work_totals:
+            work_totals[uid] = {"name": name, "time": timedelta()}
 
-        work_totals[user_id]["time"] += duration
+        work_totals[uid]["time"] += d
 
-        h = int(duration.total_seconds() // 3600)
-        m = int((duration.total_seconds() % 3600) // 60)
+        msg += f"{name}\n"
 
-        msg += f"{name} → {h}h {m}m\n"
+        del work_sessions[uid]
 
-        del work_sessions[user_id]
+    await context.bot.send_message(ADMIN_ID, msg)
 
-    await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
 
-# ---------------- COMMAND MENU ---------------- #
-
-async def set_commands(app):
-    commands = [
-        BotCommand("data", "Drive link"),
-        BotCommand("client", "Clients"),
-        BotCommand("content", "Content"),
-        BotCommand("script", "Scripts"),
-        BotCommand("schedule", "Schedule"),
-        BotCommand("work", "Clock in/out"),
-        BotCommand("workreport", "Report"),
-        BotCommand("admin", "Admin panel"),
-    ]
-    await app.bot.set_my_commands(commands)
+async def reset_daily(context: ContextTypes.DEFAULT_TYPE):
+    daily_attendance.clear()
 
 # ---------------- RUN ---------------- #
 
@@ -198,21 +215,22 @@ app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("data", data))
-app.add_handler(CommandHandler("client", client))
 app.add_handler(CommandHandler("content", content))
 app.add_handler(CommandHandler("script", script))
 app.add_handler(CommandHandler("schedule", schedule))
 app.add_handler(CommandHandler("work", work))
 app.add_handler(CommandHandler("admin", admin))
+app.add_handler(CommandHandler("forcein", forcein))
+app.add_handler(CommandHandler("forceout", forceout))
+app.add_handler(CommandHandler("whois", whois))
 
 app.add_handler(CallbackQueryHandler(handle_work, pattern="^work_"))
 
-app.post_init = set_commands
+# JOBS
+job = app.job_queue
+job.run_daily(check_late, time=time(9,15, tzinfo=TIMEZONE))
+job.run_daily(auto_clock_out, time=time(18,0, tzinfo=TIMEZONE))
+job.run_daily(reset_daily, time=time(0,0, tzinfo=TIMEZONE))
 
-# ⏰ JOBS
-job_queue = app.job_queue
-job_queue.run_daily(check_late, time=time(hour=9, minute=15))
-job_queue.run_daily(auto_clock_out, time=time(hour=18, minute=0))
-
-logging.info("Bot is running...")
+logging.info("Running...")
 app.run_polling()
